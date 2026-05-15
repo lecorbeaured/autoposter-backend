@@ -200,5 +200,4 @@ async function runPost(post) {
 
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`[autoposter] Backend running on port ${PORT}`);
-  sendAlert(`🟢 *Autoposter backend started*\nPort: ${PORT}`);
 });
