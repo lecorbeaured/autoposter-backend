@@ -1,21 +1,31 @@
-const Database = require("better-sqlite3");
 const path = require("path");
+const fs = require("fs");
+const initSqlJs = require("sql.js");
 
 const DB_PATH = process.env.DB_PATH || "./autoposter.db";
 
 let db;
 
-function getDb() {
-  if (!db) {
-    db = new Database(DB_PATH);
-    db.pragma("journal_mode = WAL");
-    init();
+async function getDb() {
+  if (db) return db;
+  const SQL = await initSqlJs();
+  if (fs.existsSync(DB_PATH)) {
+    const fileBuffer = fs.readFileSync(DB_PATH);
+    db = new SQL.Database(fileBuffer);
+  } else {
+    db = new SQL.Database();
   }
+  init();
   return db;
 }
 
+function save() {
+  const data = db.export();
+  fs.writeFileSync(DB_PATH, Buffer.from(data));
+}
+
 function init() {
-  db.exec(`
+  db.run(`
     CREATE TABLE IF NOT EXISTS posts (
       id          INTEGER PRIMARY KEY AUTOINCREMENT,
       filename    TEXT NOT NULL,
@@ -31,7 +41,6 @@ function init() {
       results     TEXT DEFAULT '{}',
       created_at  TEXT DEFAULT (datetime('now'))
     );
-
     CREATE TABLE IF NOT EXISTS logs (
       id          INTEGER PRIMARY KEY AUTOINCREMENT,
       post_id     INTEGER,
@@ -41,6 +50,7 @@ function init() {
       created_at  TEXT DEFAULT (datetime('now'))
     );
   `);
+  save();
 }
 
-module.exports = { getDb };
+module.exports = { getDb, save };
