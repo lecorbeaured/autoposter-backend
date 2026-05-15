@@ -201,3 +201,28 @@ async function runPost(post) {
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`[autoposter] Backend running on port ${PORT}`);
 });
+
+// ── PINTEREST OAUTH ───────────────────────────────────────────────
+const { getAuthUrl, exchangeCode } = require("./poster/pinterest-oauth");
+
+app.get("/auth/pinterest", (req, res) => {
+  res.redirect(getAuthUrl());
+});
+
+app.get("/auth/pinterest/callback", async (req, res) => {
+  const { code, error } = req.query;
+  if (error || !code) {
+    return res.send(`<h2>Pinterest auth failed: ${error || "no code"}</h2>`);
+  }
+  try {
+    const tokens = await exchangeCode(code);
+    res.send(`
+      <h2>✅ Pinterest Connected!</h2>
+      <p><strong>Access Token:</strong></p>
+      <textarea rows="4" style="width:100%">${tokens.access_token}</textarea>
+      <p>Copy this token and add it to Railway as PINTEREST_ACCESS_TOKEN</p>
+    `);
+  } catch (err) {
+    res.send(`<h2>❌ Error: ${err.message}</h2>`);
+  }
+});
