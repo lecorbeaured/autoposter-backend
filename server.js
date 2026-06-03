@@ -13,10 +13,8 @@ const { sendAlert, postReport } = require("./telegram");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const MEDIA_DIR = process.env.MEDIA_DIR || "./media-queue";
+const { MEDIA_DIR } = require("./poster/upload-helper");
 
-// Ensure media dir exists
-if (!fs.existsSync(MEDIA_DIR)) fs.mkdirSync(MEDIA_DIR, { recursive: true });
 
 // Multer storage
 const storage = multer.diskStorage({
@@ -29,6 +27,9 @@ app.use(cors({ origin: process.env.FRONTEND_URL || "*" }));
 app.use(express.json());
 
 // ── ROUTES ───────────────────────────────────────────────────────
+
+// Serve uploaded media files publicly
+app.use("/media", express.static(MEDIA_DIR));
 
 // Health check
 app.get("/health", (req, res) => res.json({ ok: true, ts: new Date().toISOString() }));
