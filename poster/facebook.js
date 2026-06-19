@@ -6,6 +6,7 @@ const path = require("path");
 puppeteer.use(StealthPlugin());
 
 const SESSION_FILE = path.join(__dirname, "../sessions/facebook-session.json");
+const CHROMIUM_PATH = process.env.PUPPETEER_EXECUTABLE_PATH || "/usr/bin/chromium";
 
 async function saveSession(page) {
   const cookies = await page.cookies();
@@ -26,62 +27,37 @@ async function isLoggedIn(page) {
     await new Promise(r => setTimeout(r, 2000));
     const url = page.url();
     if (url.includes("/login") || url.includes("login.php")) return false;
-    const content = await page.content();
-    if (content.includes('"is_authenticated":false')) return false;
     return true;
-  } catch {
-    return false;
-  }
+  } catch { return false; }
 }
 
 async function login(page) {
   const username = process.env.META_USERNAME;
   const password = process.env.META_PASSWORD;
-
-  if (!username || !password) {
-    throw new Error("META_USERNAME and META_PASSWORD env vars required");
-  }
-
-  await page.goto("https://www.facebook.com/login", {
-    waitUntil: "networkidle2",
-    timeout: 30000,
-  });
+  if (!username || !password) throw new Error("META_USERNAME and META_PASSWORD env vars required");
+  await page.goto("https://www.facebook.com/login", { waitUntil: "networkidle2", timeout: 30000 });
   await new Promise(r => setTimeout(r, 2000));
-
   await page.type('#email', username, { delay: 80 });
   await page.type('#pass', password, { delay: 80 });
   await new Promise(r => setTimeout(r, 500));
   await page.click('#loginbutton');
   await new Promise(r => setTimeout(r, 5000));
-
   await saveSession(page);
 }
 
 async function postToFacebook(filepath, caption, tags, type) {
   const message = `${caption}\n\n${tags}`;
-  const pageId = process.env.META_PAGE_ID; // your Facebook Page ID for navigation
+  const pageId = process.env.META_PAGE_ID;
   let browser;
-
   try {
     browser = await puppeteer.launch({
       headless: "new",
-      args: [
-        "--no-sandbox",
-        "--disable-setuid-sandbox",
-        "--disable-dev-shm-usage",
-        "--disable-accelerated-2d-canvas",
-        "--no-first-run",
-        "--no-zygote",
-        "--disable-gpu",
-      ],
+      executablePath: CHROMIUM_PATH,
+      args: ["--no-sandbox","--disable-setuid-sandbox","--disable-dev-shm-usage","--disable-gpu","--no-first-run","--no-zygote"],
     });
-
     const page = await browser.newPage();
     await page.setViewport({ width: 1280, height: 900 });
-    await page.setUserAgent(
-      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    );
-
+    await page.setUserAgent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36");
     const sessionLoaded = await loadSession(page);
     if (sessionLoaded) {
       const loggedIn = await isLoggedIn(page);
@@ -89,23 +65,16 @@ async function postToFacebook(filepath, caption, tags, type) {
     } else {
       await login(page);
     }
-
-    // Navigate to the Facebook Page
-    const pageUrl = pageId
-      ? `https://www.facebook.com/${pageId}`
-      : "https://www.facebook.com/";
+    const pageUrl = pageId ? `https://www.facebook.com/${pageId}` : "https://www.facebook.com/";
     await page.goto(pageUrl, { waitUntil: "networkidle2", timeout: 30000 });
     await new Promise(r => setTimeout(r, 3000));
-
     if (type === "video") {
-      await postVideo(page, filepath, message);
+      await postMedia(page, filepath, message);
     } else {
-      await postPhoto(page, filepath, message);
+      await postMedia(page, filepath, message);
     }
-
     await saveSession(page);
     await browser.close();
-
     return { success: true, message: `Posted to Facebook (${type}): ${path.basename(filepath)}` };
   } catch (err) {
     if (browser) await browser.close();
@@ -113,13 +82,8 @@ async function postToFacebook(filepath, caption, tags, type) {
   }
 }
 
-async function postPhoto(page, filepath, message) {
-  // Click "Photo/video" in the composer
-  const photoSelectors = [
-    '[aria-label="Photo/video"]',
-    'span:has-text("Photo/video")',
-  ];
-
+async function postMedia(page, filepath, message) {
+  const photoSelectors = ['[aria-label="Photo/video"]'];
   let clicked = false;
   for (const sel of photoSelectors) {
     try {
@@ -129,86 +93,25 @@ async function postPhoto(page, filepath, message) {
       break;
     } catch {}
   }
-
   if (!clicked) {
     const [photoBtn] = await page.$x('//span[contains(text(),"Photo")]');
-    if (photoBtn) {
-      await photoBtn.click();
-      clicked = true;
-    }
+    if (photoBtn) { await photoBtn.click(); clicked = true; }
   }
-
   if (!clicked) throw new Error("Could not find Photo/video button");
-
   await new Promise(r => setTimeout(r, 2000));
-
-  // Upload the file
   const input = await page.$('input[type="file"]');
-  if (!input) throw new Error("No file input found for photo upload");
+  if (!input) throw new Error("No file input found");
   await input.uploadFile(filepath);
-  await new Promise(r => setTimeout(r, 4000));
-
-  // Type caption in the post box
-  await typeCaption(page, message);
-  await new Promise(r => setTimeout(r, 1000));
-
-  // Click Post button
-  await clickPost(page);
   await new Promise(r => setTimeout(r, 5000));
-}
-
-async function postVideo(page, filepath, message) {
-  // Click "Photo/video" in the composer (same entry point for video)
-  const photoSelectors = [
-    '[aria-label="Photo/video"]',
-    'span:has-text("Photo/video")',
-  ];
-
-  let clicked = false;
-  for (const sel of photoSelectors) {
-    try {
-      await page.waitForSelector(sel, { timeout: 5000 });
-      await page.click(sel);
-      clicked = true;
-      break;
-    } catch {}
-  }
-
-  if (!clicked) {
-    const [photoBtn] = await page.$x('//span[contains(text(),"Photo")]');
-    if (photoBtn) {
-      await photoBtn.click();
-      clicked = true;
-    }
-  }
-
-  if (!clicked) throw new Error("Could not find Photo/video button for video upload");
-
-  await new Promise(r => setTimeout(r, 2000));
-
-  const input = await page.$('input[type="file"]');
-  if (!input) throw new Error("No file input found for video upload");
-  await input.uploadFile(filepath);
-
-  // Videos take longer to process in browser
-  await new Promise(r => setTimeout(r, 8000));
-
   await typeCaption(page, message);
   await new Promise(r => setTimeout(r, 1000));
-
   await clickPost(page);
-
-  // Wait longer for video post to submit
-  await new Promise(r => setTimeout(r, 10000));
+  await new Promise(r => setTimeout(r, 6000));
 }
 
 async function typeCaption(page, message) {
-  const captionSelectors = [
-    '[aria-label="What\'s on your mind?"]',
-    '[contenteditable="true"]',
-    'div[role="textbox"]',
-  ];
-  for (const sel of captionSelectors) {
+  const selectors = ['[aria-label="What\'s on your mind?"]','[contenteditable="true"]','div[role="textbox"]'];
+  for (const sel of selectors) {
     try {
       await page.waitForSelector(sel, { timeout: 5000 });
       await page.click(sel);
@@ -216,29 +119,19 @@ async function typeCaption(page, message) {
       return;
     } catch {}
   }
-  throw new Error("Could not find caption input");
 }
 
 async function clickPost(page) {
-  const postSelectors = [
-    '[aria-label="Post"]',
-    'div[aria-label="Post"]',
-  ];
-  for (const sel of postSelectors) {
+  const selectors = ['[aria-label="Post"]','div[aria-label="Post"]'];
+  for (const sel of selectors) {
     try {
       await page.waitForSelector(sel, { timeout: 5000 });
       await page.click(sel);
       return;
     } catch {}
   }
-  // XPath fallback
-  const [postBtn] = await page.$x('//div[@role="button"][contains(text(),"Post")]') ||
-                    await page.$x('//span[contains(text(),"Post")]');
-  if (postBtn) {
-    await postBtn.click();
-    return;
-  }
-  throw new Error("Could not find Post button");
+  const [postBtn] = await page.$x('//div[@role="button"][contains(text(),"Post")]');
+  if (postBtn) await postBtn.click();
 }
 
 module.exports = { postToFacebook };
