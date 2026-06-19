@@ -7,6 +7,7 @@ puppeteer.use(StealthPlugin());
 
 const SESSION_FILE = path.join(__dirname, "../sessions/facebook-session.json");
 const CHROMIUM_PATH = process.env.PUPPETEER_EXECUTABLE_PATH || "/usr/bin/chromium";
+const SCREENSHOT_DIR = "/data/screenshots";
 
 async function saveSession(page) {
   const cookies = await page.cookies();
@@ -31,17 +32,6 @@ async function isLoggedIn(page) {
     if (url.includes("/login") || url.includes("login.php")) return false;
     return true;
   } catch { return false; }
-}
-
-async function findAndClick(page, selectors, timeout = 5000) {
-  for (const sel of selectors) {
-    try {
-      await page.waitForSelector(sel, { timeout });
-      await page.click(sel);
-      return true;
-    } catch {}
-  }
-  return false;
 }
 
 async function findElement(page, selectors) {
@@ -77,6 +67,17 @@ async function login(page) {
   await saveSession(page);
 }
 
+async function takeScreenshot(page, name) {
+  try {
+    fs.mkdirSync(SCREENSHOT_DIR, { recursive: true });
+    const file = path.join(SCREENSHOT_DIR, name + ".png");
+    await page.screenshot({ path: file, fullPage: false });
+    console.log("[debug] screenshot saved: " + file);
+  } catch (e) {
+    console.log("[debug] screenshot failed: " + e.message);
+  }
+}
+
 async function postToFacebook(filepath, caption, tags, type) {
   const message = caption + "\n\n" + tags;
   const pageId = process.env.META_PAGE_ID;
@@ -102,23 +103,66 @@ async function postToFacebook(filepath, caption, tags, type) {
     const pageUrl = pageId ? "https://www.facebook.com/" + pageId : "https://www.facebook.com/";
     await page.goto(pageUrl, { waitUntil: "networkidle2", timeout: 30000 });
     await new Promise(r => setTimeout(r, 3000));
+    await takeScreenshot(page, "fb-after-login");
+
+    // Log all aria-labels on page for debugging
+    const ariaLabels = await page.evaluate(() => {
+      return Array.from(document.querySelectorAll("[aria-label]"))
+        .map(el => el.getAttribute("aria-label"))
+        .filter(Boolean)
+        .slice(0, 30);
+    });
+    console.log("[debug] aria-labels found:", JSON.stringify(ariaLabels));
 
     await postMedia(page, filepath, message);
     await saveSession(page);
     await browser.close();
     return { success: true, message: "Posted to Facebook (" + type + "): " + path.basename(filepath) };
   } catch (err) {
-    if (browser) await browser.close();
+    if (browser) {
+      try {
+        const pages = await browser.pages();
+        if (pages[0]) await takeScreenshot(pages[0], "fb-error");
+      } catch {}
+      await browser.close();
+    }
     return { success: false, message: "Facebook Puppeteer error: " + err.message };
   }
 }
 
 async function postMedia(page, filepath, message) {
-  const clicked = await findAndClick(page, [
+  const photoSelectors = [
     '[aria-label="Photo/video"]',
     '[aria-label="Photo or video"]',
-    'div[role="button"] span:has-text("Photo")',
-  ]);
+    '[aria-label="Photos/videos"]',
+    'div[role="button"] span',
+  ];
+
+  let clicked = false;
+  for (const sel of photoSelectors) {
+    try {
+      await page.waitForSelector(sel, { timeout: 3000 });
+      await page.click(sel);
+      clicked = true;
+      console.log("[debug] clicked photo button with: " + sel);
+      break;
+    } catch {}
+  }
+
+  if (!clicked) {
+    // Try clicking any button that contains "Photo" text
+    const allButtons = await page.$$('div[role="button"]');
+    for (const btn of allButtons) {
+      const text = await page.evaluate(el => el.innerText, btn);
+      if (text && text.toLowerCase().includes("photo")) {
+        await btn.click();
+        clicked = true;
+        console.log("[debug] clicked photo button by text: " + text);
+        break;
+      }
+    }
+  }
+
   if (!clicked) throw new Error("Could not find Photo/video button");
 
   await new Promise(r => setTimeout(r, 2000));
@@ -138,13 +182,28 @@ async function postMedia(page, filepath, message) {
   }
   await new Promise(r => setTimeout(r, 1000));
 
-  const posted = await findAndClick(page, [
-    '[aria-label="Post"]',
-    'div[aria-label="Post"]',
-    'div[role="button"][tabindex="0"]',
-  ]);
+  const postSelectors = ['[aria-label="Post"]', 'div[aria-label="Post"]'];
+  let posted = false;
+  for (const sel of postSelectors) {
+    try {
+      await page.waitForSelector(sel, { timeout: 5000 });
+      await page.click(sel);
+      posted = true;
+      break;
+    } catch {}
+  }
   if (!posted) throw new Error("Could not find Post button");
   await new Promise(r => setTimeout(r, 6000));
+}
+
+async function findElement(page, selectors) {
+  for (const sel of selectors) {
+    try {
+      const el = await page.$(sel);
+      if (el) return el;
+    } catch {}
+  }
+  return null;
 }
 
 module.exports = { postToFacebook };
