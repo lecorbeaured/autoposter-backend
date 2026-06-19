@@ -2,7 +2,6 @@ FROM node:18-bullseye-slim
 RUN apt-get update && apt-get install -y --fix-missing \
   python3 make g++ \
   chromium \
-  chromium-driver \
   fonts-liberation \
   libatk-bridge2.0-0 \
   libatk1.0-0 \
