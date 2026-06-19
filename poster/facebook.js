@@ -33,6 +33,27 @@ async function isLoggedIn(page) {
   } catch { return false; }
 }
 
+async function findAndClick(page, selectors, timeout = 5000) {
+  for (const sel of selectors) {
+    try {
+      await page.waitForSelector(sel, { timeout });
+      await page.click(sel);
+      return true;
+    } catch {}
+  }
+  return false;
+}
+
+async function findElement(page, selectors) {
+  for (const sel of selectors) {
+    try {
+      const el = await page.$(sel);
+      if (el) return el;
+    } catch {}
+  }
+  return null;
+}
+
 async function login(page) {
   const username = process.env.META_USERNAME;
   const password = process.env.META_PASSWORD;
@@ -41,20 +62,12 @@ async function login(page) {
   await page.goto("https://www.facebook.com/", { waitUntil: "networkidle2", timeout: 30000 });
   await new Promise(r => setTimeout(r, 3000));
 
-  const emailSelectors = ["#email", 'input[name="email"]', 'input[type="email"]'];
-  let emailField = null;
-  for (const sel of emailSelectors) {
-    try { emailField = await page.$(sel); if (emailField) break; } catch {}
-  }
+  const emailField = await findElement(page, ["#email", 'input[name="email"]', 'input[type="email"]']);
   if (!emailField) throw new Error("Could not find email field");
   await emailField.click({ clickCount: 3 });
   await emailField.type(username, { delay: 80 });
 
-  const passSelectors = ["#pass", 'input[name="pass"]', 'input[type="password"]'];
-  let passField = null;
-  for (const sel of passSelectors) {
-    try { passField = await page.$(sel); if (passField) break; } catch {}
-  }
+  const passField = await findElement(page, ["#pass", 'input[name="pass"]', 'input[type="password"]']);
   if (!passField) throw new Error("Could not find password field");
   await passField.click({ clickCount: 3 });
   await passField.type(password, { delay: 80 });
@@ -101,20 +114,11 @@ async function postToFacebook(filepath, caption, tags, type) {
 }
 
 async function postMedia(page, filepath, message) {
-  const photoSelectors = ['[aria-label="Photo/video"]', '[aria-label="Photo or video"]'];
-  let clicked = false;
-  for (const sel of photoSelectors) {
-    try {
-      await page.waitForSelector(sel, { timeout: 5000 });
-      await page.click(sel);
-      clicked = true;
-      break;
-    } catch {}
-  }
-  if (!clicked) {
-    const btns = await page.$x('//span[contains(text(),"Photo")]');
-    if (btns[0]) { await btns[0].click(); clicked = true; }
-  }
+  const clicked = await findAndClick(page, [
+    '[aria-label="Photo/video"]',
+    '[aria-label="Photo or video"]',
+    'div[role="button"] span:has-text("Photo")',
+  ]);
   if (!clicked) throw new Error("Could not find Photo/video button");
 
   await new Promise(r => setTimeout(r, 2000));
@@ -123,29 +127,23 @@ async function postMedia(page, filepath, message) {
   await input.uploadFile(filepath);
   await new Promise(r => setTimeout(r, 5000));
 
-  const captionSelectors = ['[aria-label="What\'s on your mind?"]', '[contenteditable="true"]', 'div[role="textbox"]'];
-  for (const sel of captionSelectors) {
-    try {
-      const el = await page.$(sel);
-      if (el) { await el.click(); await page.keyboard.type(message, { delay: 20 }); break; }
-    } catch {}
+  const captionEl = await findElement(page, [
+    '[aria-label="What\'s on your mind?"]',
+    'div[role="textbox"]',
+    '[contenteditable="true"]',
+  ]);
+  if (captionEl) {
+    await captionEl.click();
+    await page.keyboard.type(message, { delay: 20 });
   }
   await new Promise(r => setTimeout(r, 1000));
 
-  const postSelectors = ['[aria-label="Post"]', 'div[aria-label="Post"]'];
-  let posted = false;
-  for (const sel of postSelectors) {
-    try {
-      await page.waitForSelector(sel, { timeout: 5000 });
-      await page.click(sel);
-      posted = true;
-      break;
-    } catch {}
-  }
-  if (!posted) {
-    const btns = await page.$x('//div[@role="button"][contains(text(),"Post")]');
-    if (btns[0]) await btns[0].click();
-  }
+  const posted = await findAndClick(page, [
+    '[aria-label="Post"]',
+    'div[aria-label="Post"]',
+    'div[role="button"][tabindex="0"]',
+  ]);
+  if (!posted) throw new Error("Could not find Post button");
   await new Promise(r => setTimeout(r, 6000));
 }
 
