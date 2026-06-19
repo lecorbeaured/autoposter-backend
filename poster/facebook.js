@@ -41,52 +41,31 @@ async function login(page) {
   await page.goto("https://www.facebook.com/", { waitUntil: "networkidle2", timeout: 30000 });
   await new Promise(r => setTimeout(r, 3000));
 
-  // Try multiple email selectors
-  const emailSelectors = ['#email', 'input[name="email"]', 'input[type="email"]', 'input[data-testid="royal_email"]'];
+  const emailSelectors = ["#email", 'input[name="email"]', 'input[type="email"]'];
   let emailField = null;
   for (const sel of emailSelectors) {
-    try {
-      await page.waitForSelector(sel, { timeout: 5000 });
-      emailField = await page.$(sel);
-      if (emailField) break;
-    } catch {}
+    try { emailField = await page.$(sel); if (emailField) break; } catch {}
   }
-  if (!emailField) throw new Error("Could not find email field on Facebook login page");
-
-  await emailField.click();
+  if (!emailField) throw new Error("Could not find email field");
+  await emailField.click({ clickCount: 3 });
   await emailField.type(username, { delay: 80 });
 
-  const passSelectors = ['#pass', 'input[name="pass"]', 'input[type="password"]', 'input[data-testid="royal_pass"]'];
+  const passSelectors = ["#pass", 'input[name="pass"]', 'input[type="password"]'];
   let passField = null;
   for (const sel of passSelectors) {
-    try {
-      passField = await page.$(sel);
-      if (passField) break;
-    } catch {}
+    try { passField = await page.$(sel); if (passField) break; } catch {}
   }
   if (!passField) throw new Error("Could not find password field");
-
-  await passField.click();
+  await passField.click({ clickCount: 3 });
   await passField.type(password, { delay: 80 });
   await new Promise(r => setTimeout(r, 500));
-
-  // Click login button
-  const loginSelectors = ['[data-testid="royal_login_button"]', 'button[name="login"]', 'button[type="submit"]', '#loginbutton'];
-  let loginBtn = null;
-  for (const sel of loginSelectors) {
-    try {
-      loginBtn = await page.$(sel);
-      if (loginBtn) break;
-    } catch {}
-  }
-  if (!loginBtn) throw new Error("Could not find login button");
-  await loginBtn.click();
+  await passField.press("Enter");
   await new Promise(r => setTimeout(r, 6000));
   await saveSession(page);
 }
 
 async function postToFacebook(filepath, caption, tags, type) {
-  const message = `${caption}\n\n${tags}`;
+  const message = caption + "\n\n" + tags;
   const pageId = process.env.META_PAGE_ID;
   let browser;
   try {
@@ -107,17 +86,17 @@ async function postToFacebook(filepath, caption, tags, type) {
       await login(page);
     }
 
-    const pageUrl = pageId ? `https://www.facebook.com/${pageId}` : "https://www.facebook.com/";
+    const pageUrl = pageId ? "https://www.facebook.com/" + pageId : "https://www.facebook.com/";
     await page.goto(pageUrl, { waitUntil: "networkidle2", timeout: 30000 });
     await new Promise(r => setTimeout(r, 3000));
 
     await postMedia(page, filepath, message);
     await saveSession(page);
     await browser.close();
-    return { success: true, message: `Posted to Facebook (${type}): ${path.basename(filepath)}` };
+    return { success: true, message: "Posted to Facebook (" + type + "): " + path.basename(filepath) };
   } catch (err) {
     if (browser) await browser.close();
-    return { success: false, message: `Facebook Puppeteer error: ${err.message}` };
+    return { success: false, message: "Facebook Puppeteer error: " + err.message };
   }
 }
 
@@ -144,7 +123,6 @@ async function postMedia(page, filepath, message) {
   await input.uploadFile(filepath);
   await new Promise(r => setTimeout(r, 5000));
 
-  // Type caption
   const captionSelectors = ['[aria-label="What\'s on your mind?"]', '[contenteditable="true"]', 'div[role="textbox"]'];
   for (const sel of captionSelectors) {
     try {
@@ -154,7 +132,6 @@ async function postMedia(page, filepath, message) {
   }
   await new Promise(r => setTimeout(r, 1000));
 
-  // Click Post
   const postSelectors = ['[aria-label="Post"]', 'div[aria-label="Post"]'];
   let posted = false;
   for (const sel of postSelectors) {
@@ -166,8 +143,8 @@ async function postMedia(page, filepath, message) {
     } catch {}
   }
   if (!posted) {
-    const [postBtn] = await page.$x('//div[@role="button"][contains(text(),"Post")]');
-    if (postBtn) await postBtn.click();
+    const btns = await page.$x('//div[@role="button"][contains(text(),"Post")]');
+    if (btns[0]) await btns[0].click();
   }
   await new Promise(r => setTimeout(r, 6000));
 }
