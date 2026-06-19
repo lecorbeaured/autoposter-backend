@@ -5,21 +5,25 @@ const path = require("path");
 
 puppeteer.use(StealthPlugin());
 
-const SESSION_FILE = path.join(__dirname, "../sessions/facebook-session.json");
+const SESSION_FILE = "/data/sessions/facebook-session.json";
 const CHROMIUM_PATH = process.env.PUPPETEER_EXECUTABLE_PATH || "/usr/bin/chromium";
-const SCREENSHOT_DIR = "/data/screenshots";
 
 async function saveSession(page) {
   const cookies = await page.cookies();
   fs.mkdirSync(path.dirname(SESSION_FILE), { recursive: true });
   fs.writeFileSync(SESSION_FILE, JSON.stringify(cookies, null, 2));
+  console.log("[fb] session saved to " + SESSION_FILE);
 }
 
 async function loadSession(page) {
-  if (!fs.existsSync(SESSION_FILE)) return false;
+  if (!fs.existsSync(SESSION_FILE)) {
+    console.log("[fb] no session file found, will login fresh");
+    return false;
+  }
   try {
     const cookies = JSON.parse(fs.readFileSync(SESSION_FILE));
     await page.setCookie(...cookies);
+    console.log("[fb] session loaded, " + cookies.length + " cookies");
     return true;
   } catch { return false; }
 }
@@ -29,7 +33,10 @@ async function isLoggedIn(page) {
     await page.goto("https://www.facebook.com/", { waitUntil: "networkidle2", timeout: 30000 });
     await new Promise(r => setTimeout(r, 3000));
     const url = page.url();
+    console.log("[fb] post-session URL: " + url);
     if (url.includes("/login") || url.includes("login.php")) return false;
+    const content = await page.content();
+    if (content.includes("Log In") && content.includes("Create new account") && !content.includes("What's on your mind")) return false;
     return true;
   } catch { return false; }
 }
@@ -49,6 +56,7 @@ async function login(page) {
   const password = process.env.META_PASSWORD;
   if (!username || !password) throw new Error("META_USERNAME and META_PASSWORD env vars required");
 
+  console.log("[fb] logging in as " + username);
   await page.goto("https://www.facebook.com/", { waitUntil: "networkidle2", timeout: 30000 });
   await new Promise(r => setTimeout(r, 3000));
 
@@ -63,19 +71,11 @@ async function login(page) {
   await passField.type(password, { delay: 80 });
   await new Promise(r => setTimeout(r, 500));
   await passField.press("Enter");
-  await new Promise(r => setTimeout(r, 6000));
-  await saveSession(page);
-}
+  await new Promise(r => setTimeout(r, 8000));
 
-async function takeScreenshot(page, name) {
-  try {
-    fs.mkdirSync(SCREENSHOT_DIR, { recursive: true });
-    const file = path.join(SCREENSHOT_DIR, name + ".png");
-    await page.screenshot({ path: file, fullPage: false });
-    console.log("[debug] screenshot saved: " + file);
-  } catch (e) {
-    console.log("[debug] screenshot failed: " + e.message);
-  }
+  const url = page.url();
+  console.log("[fb] post-login URL: " + url);
+  await saveSession(page);
 }
 
 async function postToFacebook(filepath, caption, tags, type) {
@@ -95,7 +95,12 @@ async function postToFacebook(filepath, caption, tags, type) {
     const sessionLoaded = await loadSession(page);
     if (sessionLoaded) {
       const loggedIn = await isLoggedIn(page);
-      if (!loggedIn) await login(page);
+      if (!loggedIn) {
+        console.log("[fb] session invalid, logging in fresh");
+        await login(page);
+      } else {
+        console.log("[fb] session valid, skipping login");
+      }
     } else {
       await login(page);
     }
@@ -103,29 +108,21 @@ async function postToFacebook(filepath, caption, tags, type) {
     const pageUrl = pageId ? "https://www.facebook.com/" + pageId : "https://www.facebook.com/";
     await page.goto(pageUrl, { waitUntil: "networkidle2", timeout: 30000 });
     await new Promise(r => setTimeout(r, 3000));
-    await takeScreenshot(page, "fb-after-login");
 
-    // Log all aria-labels on page for debugging
     const ariaLabels = await page.evaluate(() => {
       return Array.from(document.querySelectorAll("[aria-label]"))
         .map(el => el.getAttribute("aria-label"))
         .filter(Boolean)
-        .slice(0, 30);
+        .slice(0, 40);
     });
-    console.log("[debug] aria-labels found:", JSON.stringify(ariaLabels));
+    console.log("[fb] aria-labels after login:", JSON.stringify(ariaLabels));
 
     await postMedia(page, filepath, message);
     await saveSession(page);
     await browser.close();
     return { success: true, message: "Posted to Facebook (" + type + "): " + path.basename(filepath) };
   } catch (err) {
-    if (browser) {
-      try {
-        const pages = await browser.pages();
-        if (pages[0]) await takeScreenshot(pages[0], "fb-error");
-      } catch {}
-      await browser.close();
-    }
+    if (browser) await browser.close();
     return { success: false, message: "Facebook Puppeteer error: " + err.message };
   }
 }
@@ -135,7 +132,7 @@ async function postMedia(page, filepath, message) {
     '[aria-label="Photo/video"]',
     '[aria-label="Photo or video"]',
     '[aria-label="Photos/videos"]',
-    'div[role="button"] span',
+    '[aria-label="Add photo or video"]',
   ];
 
   let clicked = false;
@@ -144,20 +141,19 @@ async function postMedia(page, filepath, message) {
       await page.waitForSelector(sel, { timeout: 3000 });
       await page.click(sel);
       clicked = true;
-      console.log("[debug] clicked photo button with: " + sel);
+      console.log("[fb] clicked photo button: " + sel);
       break;
     } catch {}
   }
 
   if (!clicked) {
-    // Try clicking any button that contains "Photo" text
     const allButtons = await page.$$('div[role="button"]');
     for (const btn of allButtons) {
-      const text = await page.evaluate(el => el.innerText, btn);
+      const text = await page.evaluate(el => el.innerText || el.textContent, btn);
       if (text && text.toLowerCase().includes("photo")) {
         await btn.click();
         clicked = true;
-        console.log("[debug] clicked photo button by text: " + text);
+        console.log("[fb] clicked photo button by text: " + text.trim());
         break;
       }
     }
@@ -194,16 +190,6 @@ async function postMedia(page, filepath, message) {
   }
   if (!posted) throw new Error("Could not find Post button");
   await new Promise(r => setTimeout(r, 6000));
-}
-
-async function findElement(page, selectors) {
-  for (const sel of selectors) {
-    try {
-      const el = await page.$(sel);
-      if (el) return el;
-    } catch {}
-  }
-  return null;
 }
 
 module.exports = { postToFacebook };
