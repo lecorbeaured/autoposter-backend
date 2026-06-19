@@ -1,7 +1,8 @@
 const { postToYouTube } = require("./youtube");
 const { postToTwitter } = require("./twitter");
 const { postToPinterest } = require("./pinterest");
-const { postToFacebook, postToInstagram } = require("./meta");
+const { postToFacebook } = require("./facebook");
+const { postToInstagram } = require("./instagram");
 const { postToTikTok } = require("./tiktok");
 
 const HANDLERS = {
@@ -29,7 +30,6 @@ async function dispatchPost(post) {
       post.tags,
       post.type
     );
-    // Small delay between platforms to avoid rate limits
     await new Promise(r => setTimeout(r, 2000));
   }
 
